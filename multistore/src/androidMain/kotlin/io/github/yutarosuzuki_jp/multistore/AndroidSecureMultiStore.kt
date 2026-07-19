@@ -38,10 +38,26 @@ class AndroidSecureMultiStore(
     init {
         when (config) {
             is AndroidSecurityConfig.EncryptedSharedPreferences -> {
-                val masterKey = MasterKey.Builder(context)
-                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                    .setRequestStrongBoxBacked(config.useStrongBox)
-                    .build()
+                val masterKey = try {
+                    if (config.useStrongBox && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                        MasterKey.Builder(context)
+                            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                            .setRequestStrongBoxBacked(true)
+                            .build()
+                    } else {
+                        MasterKey.Builder(context)
+                            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                            .build()
+                    }
+                } catch (e: Exception) {
+                    if (config.useStrongBox) {
+                        MasterKey.Builder(context)
+                            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                            .build()
+                    } else {
+                        throw e
+                    }
+                }
                 sharedPrefs = EncryptedSharedPreferences.create(
                     context,
                     config.name,
@@ -69,16 +85,35 @@ class AndroidSecureMultiStore(
                 KeyProperties.KEY_ALGORITHM_RSA,
                 "AndroidKeyStore"
             )
-            val spec = KeyGenParameterSpec.Builder(
-                alias,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            )
-                .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512, KeyProperties.DIGEST_SHA1)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
-                .setIsStrongBoxBacked(useStrongBox)
-                .build()
-            kpg.initialize(spec)
-            kpg.generateKeyPair()
+            
+            fun buildSpec(strongBox: Boolean): KeyGenParameterSpec {
+                val builder = KeyGenParameterSpec.Builder(
+                    alias,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                )
+                    .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512, KeyProperties.DIGEST_SHA1)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
+                if (strongBox && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    builder.setIsStrongBoxBacked(true)
+                }
+                return builder.build()
+            }
+
+            try {
+                kpg.initialize(buildSpec(useStrongBox))
+                kpg.generateKeyPair()
+            } catch (e: Exception) {
+                if (useStrongBox) {
+                    try {
+                        kpg.initialize(buildSpec(false))
+                        kpg.generateKeyPair()
+                    } catch (fallbackEx: Exception) {
+                        throw fallbackEx
+                    }
+                } else {
+                    throw e
+                }
+            }
         }
     }
 
@@ -88,17 +123,36 @@ class AndroidSecureMultiStore(
                 KeyProperties.KEY_ALGORITHM_AES,
                 "AndroidKeyStore"
             )
-            val spec = KeyGenParameterSpec.Builder(
-                alias,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .setIsStrongBoxBacked(useStrongBox)
-                .build()
-            keyGenerator.init(spec)
-            keyGenerator.generateKey()
+
+            fun buildSpec(strongBox: Boolean): KeyGenParameterSpec {
+                val builder = KeyGenParameterSpec.Builder(
+                    alias,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                if (strongBox && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    builder.setIsStrongBoxBacked(true)
+                }
+                return builder.build()
+            }
+
+            try {
+                keyGenerator.init(buildSpec(useStrongBox))
+                keyGenerator.generateKey()
+            } catch (e: Exception) {
+                if (useStrongBox) {
+                    try {
+                        keyGenerator.init(buildSpec(false))
+                        keyGenerator.generateKey()
+                    } catch (fallbackEx: Exception) {
+                        throw fallbackEx
+                    }
+                } else {
+                    throw e
+                }
+            }
         }
     }
 
@@ -303,6 +357,24 @@ class AndroidSecureMultiStore(
         if (prefs != null) {
             if (value == null) prefs.edit().remove(key).apply()
             else prefs.edit().putFloat(key, value).apply()
+            return
+        }
+        putString(key, value?.toString())
+    }
+
+    override fun getDouble(key: String): Double? {
+        val prefs = sharedPrefs
+        if (prefs != null) {
+            return if (prefs.contains(key)) Double.fromBits(prefs.getLong(key, 0L)) else null
+        }
+        return getString(key)?.toDoubleOrNull()
+    }
+
+    override fun putDouble(key: String, value: Double?) {
+        val prefs = sharedPrefs
+        if (prefs != null) {
+            if (value == null) prefs.edit().remove(key).apply()
+            else prefs.edit().putLong(key, value.toBits()).apply()
             return
         }
         putString(key, value?.toString())

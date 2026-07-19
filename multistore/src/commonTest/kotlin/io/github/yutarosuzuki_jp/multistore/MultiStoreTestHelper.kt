@@ -10,6 +10,7 @@ fun runMultiStoreTests(store: MultiStore) {
     assertNull(store.getInt("key_int"))
     assertNull(store.getLong("key_long"))
     assertNull(store.getFloat("key_float"))
+    assertNull(store.getDouble("key_double"))
     assertNull(store.getBoolean("key_bool"))
     assertFalse(store.hasKey("key_str"))
 
@@ -18,6 +19,7 @@ fun runMultiStoreTests(store: MultiStore) {
     store.putInt("key_int", 42)
     store.putLong("key_long", 1234567890L)
     store.putFloat("key_float", 3.14f)
+    store.putDouble("key_double", 2.71828)
     store.putBoolean("key_bool", true)
 
     // Verify values
@@ -25,6 +27,7 @@ fun runMultiStoreTests(store: MultiStore) {
     assertEquals(42, store.getInt("key_int"))
     assertEquals(1234567890L, store.getLong("key_long"))
     assertEquals(3.14f, store.getFloat("key_float"))
+    assertEquals(2.71828, store.getDouble("key_double"))
     assertEquals(true, store.getBoolean("key_bool"))
     assertTrue(store.hasKey("key_str"))
 
@@ -45,5 +48,6 @@ fun runMultiStoreTests(store: MultiStore) {
     store.clear()
     assertNull(store.getLong("key_long"))
     assertNull(store.getFloat("key_float"))
+    assertNull(store.getDouble("key_double"))
     assertNull(store.getBoolean("key_bool"))
 }

@@ -13,6 +13,9 @@ interface MultiStore {
     fun getFloat(key: String): Float?
     fun putFloat(key: String, value: Float?)
     
+    fun getDouble(key: String): Double?
+    fun putDouble(key: String, value: Double?)
+    
     fun getBoolean(key: String): Boolean?
     fun putBoolean(key: String, value: Boolean?)
     

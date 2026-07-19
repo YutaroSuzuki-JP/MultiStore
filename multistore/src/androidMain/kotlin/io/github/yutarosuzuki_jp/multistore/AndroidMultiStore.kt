@@ -58,6 +58,17 @@ class AndroidMultiStore(
         }
     }
 
+    override fun getDouble(key: String): Double? {
+        return if (prefs.contains(key)) Double.fromBits(prefs.getLong(key, 0L)) else null
+    }
+    override fun putDouble(key: String, value: Double?) {
+        if (value == null) {
+            prefs.edit().remove(key).apply()
+        } else {
+            prefs.edit().putLong(key, value.toBits()).apply()
+        }
+    }
+
     override fun remove(key: String) {
         prefs.edit().remove(key).apply()
     }

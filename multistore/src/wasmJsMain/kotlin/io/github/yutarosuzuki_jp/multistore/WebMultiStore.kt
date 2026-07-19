@@ -32,6 +32,9 @@ class WebMultiStore(
     override fun getFloat(key: String): Float? = getString(key)?.toFloatOrNull()
     override fun putFloat(key: String, value: Float?) = putString(key, value?.toString())
 
+    override fun getDouble(key: String): Double? = getString(key)?.toDoubleOrNull()
+    override fun putDouble(key: String, value: Double?) = putString(key, value?.toString())
+
     override fun getBoolean(key: String): Boolean? = getString(key)?.toBooleanStrictOrNull()
     override fun putBoolean(key: String, value: Boolean?) = putString(key, value?.toString())
 

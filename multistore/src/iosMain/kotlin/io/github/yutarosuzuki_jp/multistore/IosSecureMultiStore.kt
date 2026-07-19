@@ -1,36 +1,13 @@
 package io.github.yutarosuzuki_jp.multistore
 
 import kotlinx.cinterop.*
-import platform.CoreFoundation.CFDictionaryRef
-import platform.CoreFoundation.CFTypeRefVar
-import platform.CoreFoundation.kCFBooleanFalse
-import platform.CoreFoundation.kCFBooleanTrue
+import platform.CoreFoundation.*
 import platform.Foundation.NSData
-import platform.Foundation.NSMutableDictionary
 import platform.Foundation.NSString
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.create
 import platform.Foundation.dataUsingEncoding
-import platform.Foundation.NSCopyingProtocol
-import platform.Security.SecItemAdd
-import platform.Security.SecItemCopyMatching
-import platform.Security.SecItemDelete
-import platform.Security.SecItemUpdate
-import platform.Security.errSecSuccess
-import platform.Security.kSecAttrAccount
-import platform.Security.kSecAttrService
-import platform.Security.kSecClass
-import platform.Security.kSecClassGenericPassword
-import platform.Security.kSecMatchLimit
-import platform.Security.kSecMatchLimitOne
-import platform.Security.kSecReturnData
-import platform.Security.kSecValueData
-import platform.Security.kSecAttrAccessible
-import platform.Security.kSecAttrAccessibleAfterFirstUnlock
-import platform.Security.kSecAttrAccessibleWhenUnlocked
-import platform.Security.kSecAttrAccessibleAlways
-import platform.Security.kSecAttrAccessGroup
-import platform.Security.kSecAttrSynchronizable
+import platform.Security.*
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 class IosSecureMultiStore(
@@ -40,53 +17,58 @@ class IosSecureMultiStore(
 
     private fun String.toNSString(): NSString = NSString.create(string = this)
 
-    private fun castKey(key: CPointer<*>?): NSCopyingProtocol {
-        return interpretObjCPointer(key!!.rawValue)
+    private fun castObj(obj: Any): COpaquePointer {
+        return interpretCPointer<CPointed>(obj.objcPtr())!!
     }
 
-    private fun NSMutableDictionary.applyConfig() {
+    private fun CFMutableDictionaryRef.applyConfig() {
         val accessibleValue = when (config.accessible) {
             IosSecurityConfig.Accessible.WhenUnlocked -> kSecAttrAccessibleWhenUnlocked
             IosSecurityConfig.Accessible.AfterFirstUnlock -> kSecAttrAccessibleAfterFirstUnlock
             IosSecurityConfig.Accessible.Always -> kSecAttrAccessibleAlways
         }
-        setObject(accessibleValue, forKey = castKey(kSecAttrAccessible))
+        CFDictionaryAddValue(this, kSecAttrAccessible, accessibleValue)
         
         config.accessGroup?.let {
-            setObject(it.toNSString(), forKey = castKey(kSecAttrAccessGroup))
+            CFDictionaryAddValue(this, kSecAttrAccessGroup, castObj(it.toNSString()))
         }
         
         if (config.synchronizable) {
-            setObject(kCFBooleanTrue, forKey = castKey(kSecAttrSynchronizable))
-        } else {
-            setObject(kCFBooleanFalse, forKey = castKey(kSecAttrSynchronizable))
+            CFDictionaryAddValue(this, kSecAttrSynchronizable, kCFBooleanTrue)
         }
     }
 
     override fun getString(key: String): String? {
-        val query = NSMutableDictionary().apply {
-            setObject(kSecClassGenericPassword, forKey = castKey(kSecClass))
-            setObject(serviceName.toNSString(), forKey = castKey(kSecAttrService))
-            setObject(key.toNSString(), forKey = castKey(kSecAttrAccount))
-            setObject(kCFBooleanTrue, forKey = castKey(kSecReturnData))
-            setObject(kSecMatchLimitOne, forKey = castKey(kSecMatchLimit))
-            applyConfig()
-        }
+        val nsService = serviceName.toNSString()
+        val nsKey = key.toNSString()
+        
+        val query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, null, null) ?: return null
+        try {
+            CFDictionaryAddValue(query, kSecClass, kSecClassGenericPassword)
+            CFDictionaryAddValue(query, kSecAttrService, castObj(nsService))
+            CFDictionaryAddValue(query, kSecAttrAccount, castObj(nsKey))
+            CFDictionaryAddValue(query, kSecReturnData, kCFBooleanTrue)
+            CFDictionaryAddValue(query, kSecMatchLimit, kSecMatchLimitOne)
 
-        return memScoped {
-            val result = alloc<CFTypeRefVar>()
-            val status = SecItemCopyMatching(query as CFDictionaryRef, result.ptr)
-            if (status == errSecSuccess) {
-                val ptr = result.value
-                if (ptr != null) {
-                    val data = interpretObjCPointer<NSData>(ptr.rawValue)
-                    NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString()
+            return memScoped {
+                val result = alloc<CFTypeRefVar>()
+                val status = SecItemCopyMatching(query, result.ptr)
+                println("MultiStore: SecItemCopyMatching (getString) status = $status")
+                if (status == errSecSuccess) {
+                    val ptr = result.value
+                    if (ptr != null) {
+                        val data = interpretObjCPointer<NSData>(ptr.rawValue)
+                        NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString()
+                    } else {
+                        println("MultiStore: SecItemCopyMatching (getString) result pointer is null")
+                        null
+                    }
                 } else {
                     null
                 }
-            } else {
-                null
             }
+        } finally {
+            CFRelease(query)
         }
     }
 
@@ -96,28 +78,43 @@ class IosSecureMultiStore(
             return
         }
 
-        val data = value.toNSString().dataUsingEncoding(NSUTF8StringEncoding) ?: return
+        val nsService = serviceName.toNSString()
+        val nsKey = key.toNSString()
+        val nsData = value.toNSString().dataUsingEncoding(NSUTF8StringEncoding) ?: return
 
-        if (hasKey(key)) {
-            val query = NSMutableDictionary().apply {
-                setObject(kSecClassGenericPassword, forKey = castKey(kSecClass))
-                setObject(serviceName.toNSString(), forKey = castKey(kSecAttrService))
-                setObject(key.toNSString(), forKey = castKey(kSecAttrAccount))
-                applyConfig()
+        val exists = hasKey(key)
+        println("MultiStore: putString key = '$key', exists = $exists")
+
+        if (exists) {
+            val query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, null, null) ?: return
+            val attributesToUpdate = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, null, null) ?: return
+            try {
+                CFDictionaryAddValue(query, kSecClass, kSecClassGenericPassword)
+                CFDictionaryAddValue(query, kSecAttrService, castObj(nsService))
+                CFDictionaryAddValue(query, kSecAttrAccount, castObj(nsKey))
+
+                CFDictionaryAddValue(attributesToUpdate, kSecValueData, castObj(nsData))
+
+                val status = SecItemUpdate(query, attributesToUpdate)
+                println("MultiStore: SecItemUpdate status = $status")
+            } finally {
+                CFRelease(query)
+                CFRelease(attributesToUpdate)
             }
-            val attributesToUpdate = NSMutableDictionary().apply {
-                setObject(data, forKey = castKey(kSecValueData))
-            }
-            SecItemUpdate(query as CFDictionaryRef, attributesToUpdate as CFDictionaryRef)
         } else {
-            val query = NSMutableDictionary().apply {
-                setObject(kSecClassGenericPassword, forKey = castKey(kSecClass))
-                setObject(serviceName.toNSString(), forKey = castKey(kSecAttrService))
-                setObject(key.toNSString(), forKey = castKey(kSecAttrAccount))
-                setObject(data, forKey = castKey(kSecValueData))
-                applyConfig()
+            val query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, null, null) ?: return
+            try {
+                CFDictionaryAddValue(query, kSecClass, kSecClassGenericPassword)
+                CFDictionaryAddValue(query, kSecAttrService, castObj(nsService))
+                CFDictionaryAddValue(query, kSecAttrAccount, castObj(nsKey))
+                CFDictionaryAddValue(query, kSecValueData, castObj(nsData))
+                query.applyConfig()
+
+                val status = SecItemAdd(query, null)
+                println("MultiStore: SecItemAdd status = $status")
+            } finally {
+                CFRelease(query)
             }
-            SecItemAdd(query as CFDictionaryRef, null)
         }
     }
 
@@ -130,37 +127,43 @@ class IosSecureMultiStore(
     override fun getFloat(key: String): Float? = getString(key)?.toFloatOrNull()
     override fun putFloat(key: String, value: Float?) = putString(key, value?.toString())
 
+    override fun getDouble(key: String): Double? = getString(key)?.toDoubleOrNull()
+    override fun putDouble(key: String, value: Double?) = putString(key, value?.toString())
+
     override fun getBoolean(key: String): Boolean? = getString(key)?.toBooleanStrictOrNull()
     override fun putBoolean(key: String, value: Boolean?) = putString(key, value?.toString())
 
     override fun remove(key: String) {
-        val query = NSMutableDictionary().apply {
-            setObject(kSecClassGenericPassword, forKey = castKey(kSecClass))
-            setObject(serviceName.toNSString(), forKey = castKey(kSecAttrService))
-            setObject(key.toNSString(), forKey = castKey(kSecAttrAccount))
-            applyConfig()
+        val nsService = serviceName.toNSString()
+        val nsKey = key.toNSString()
+        val query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, null, null) ?: return
+        try {
+            CFDictionaryAddValue(query, kSecClass, kSecClassGenericPassword)
+            CFDictionaryAddValue(query, kSecAttrService, castObj(nsService))
+            CFDictionaryAddValue(query, kSecAttrAccount, castObj(nsKey))
+
+            val status = SecItemDelete(query)
+            println("MultiStore: SecItemDelete (remove) status = $status")
+        } finally {
+            CFRelease(query)
         }
-        SecItemDelete(query as CFDictionaryRef)
     }
 
     override fun clear() {
-        val query = NSMutableDictionary().apply {
-            setObject(kSecClassGenericPassword, forKey = castKey(kSecClass))
-            setObject(serviceName.toNSString(), forKey = castKey(kSecAttrService))
-            applyConfig()
+        val nsService = serviceName.toNSString()
+        val query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, null, null) ?: return
+        try {
+            CFDictionaryAddValue(query, kSecClass, kSecClassGenericPassword)
+            CFDictionaryAddValue(query, kSecAttrService, castObj(nsService))
+
+            val status = SecItemDelete(query)
+            println("MultiStore: SecItemDelete (clear) status = $status")
+        } finally {
+            CFRelease(query)
         }
-        SecItemDelete(query as CFDictionaryRef)
     }
 
     override fun hasKey(key: String): Boolean {
-        val query = NSMutableDictionary().apply {
-            setObject(kSecClassGenericPassword, forKey = castKey(kSecClass))
-            setObject(serviceName.toNSString(), forKey = castKey(kSecAttrService))
-            setObject(key.toNSString(), forKey = castKey(kSecAttrAccount))
-            setObject(kSecMatchLimitOne, forKey = castKey(kSecMatchLimit))
-            applyConfig()
-        }
-        val status = SecItemCopyMatching(query as CFDictionaryRef, null)
-        return status == errSecSuccess
+        return getString(key) != null
     }
 }

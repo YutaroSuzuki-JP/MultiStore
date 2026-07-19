@@ -76,6 +76,20 @@ class IosMultiStore(
         }
     }
 
+    override fun getDouble(key: String): Double? {
+        val sKey = getStorageKey(key)
+        return if (hasKey(key)) userDefaults.doubleForKey(sKey) else null
+    }
+    
+    override fun putDouble(key: String, value: Double?) {
+        val sKey = getStorageKey(key)
+        if (value == null) {
+            userDefaults.removeObjectForKey(sKey)
+        } else {
+            userDefaults.setDouble(value, forKey = sKey)
+        }
+    }
+
     override fun remove(key: String) {
         userDefaults.removeObjectForKey(getStorageKey(key))
     }

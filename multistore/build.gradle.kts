@@ -1,3 +1,7 @@
+@file:OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
+
+import java.util.Base64
+
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidLibrary)
@@ -103,7 +107,16 @@ signing {
     val signingKey = System.getenv("GPG_SIGNING_KEY")
     val signingPassword = System.getenv("GPG_SIGNING_PASSWORD")
     if (signingKey != null && signingPassword != null) {
-        useInMemoryPgpKeys(signingKey, signingPassword)
+        var key = signingKey.replace("\r\n", "\n").replace("\r", "\n").replace("\\n", "\n").trim()
+        if (!key.startsWith("-----BEGIN")) {
+            try {
+                val decoded = Base64.getDecoder().decode(key.replace("\\s".toRegex(), ""))
+                key = String(decoded).replace("\r\n", "\n").replace("\r", "\n").replace("\\n", "\n").trim()
+            } catch (e: Exception) {
+                // Keep original if decoding fails
+            }
+        }
+        useInMemoryPgpKeys(key, signingPassword)
         sign(publishing.publications)
     }
 }
